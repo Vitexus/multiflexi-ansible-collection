@@ -1,0 +1,29 @@
+---
+# Applications themselves come from the installed multiflexi-* packages (role `demo`);
+# this mode presents them and records the result as the baseline.
+- name: Install tools used by audit and snapshot
+  ansible.builtin.apt:
+    name:
+      - debsums
+      - gzip
+      - iproute2
+    state: present
+  become: true
+
+- name: Create state and backup directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+    owner: "{{ demo_showcase_owner }}"
+    group: "{{ demo_showcase_group }}"
+  loop:
+    - "{{ demo_showcase_state_dir }}"
+    - "{{ demo_showcase_backup_dir }}"
+  become: true
+
+- name: Create the showcase content
+  ansible.builtin.include_tasks: content.yml
+
+- name: Record the baseline
+  ansible.builtin.include_tasks: snapshot.yml

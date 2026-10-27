@@ -1,0 +1,53 @@
+---
+# Collects the current records into demo_showcase_current.
+- name: Collect applications
+  vitexus.multiflexi.application_info:
+  register: _demo_showcase_applications
+  become: true
+
+- name: Collect users
+  vitexus.multiflexi.user_info:
+  register: _demo_showcase_users
+  become: true
+
+- name: Collect companies
+  vitexus.multiflexi.company_info:
+  register: _demo_showcase_companies
+  become: true
+
+- name: Collect run templates
+  vitexus.multiflexi.runtemplate_info:
+  register: _demo_showcase_runtemplates
+  become: true
+
+- name: Collect credentials
+  vitexus.multiflexi.credential_info:
+  register: _demo_showcase_credentials
+  become: true
+
+- name: Collect tokens
+  vitexus.multiflexi.token_info:
+  register: _demo_showcase_tokens
+  become: true
+
+- name: Collect event sources
+  vitexus.multiflexi.eventsource_info:
+  register: _demo_showcase_eventsources
+  become: true
+
+- name: Collect event rules
+  vitexus.multiflexi.eventrule_info:
+  register: _demo_showcase_eventrules
+  become: true
+
+- name: Remember the current records
+  ansible.builtin.set_fact:
+    demo_showcase_current:
+      applications: "{{ _demo_showcase_applications.applications }}"
+      users: "{{ _demo_showcase_users.users }}"
+      companies: "{{ _demo_showcase_companies.companies }}"
+      runtemplates: "{{ _demo_showcase_runtemplates.runtemplates }}"
+      credentials: "{{ _demo_showcase_credentials.credentials }}"
+      tokens: "{{ _demo_showcase_tokens.tokens }}"
+      eventsources: "{{ _demo_showcase_eventsources.eventsources }}"
+      eventrules: "{{ _demo_showcase_eventrules.eventrules }}"

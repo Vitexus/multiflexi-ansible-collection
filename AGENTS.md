@@ -21,7 +21,8 @@ The collection follows standard Ansible collection structure:
 - `runtemplate.py` - Manage run templates with config key=value pairs; idempotency checks scalar fields and full config dict
 - `company.py` - Manage MultiFlexi companies (create/update/delete)
 - `companyapp.py` - Assign/remove applications from companies
-- `company_info.py` - Gather company facts
+- `company_info.py` - Gather company facts; lists all companies when no selector is given
+- `application_info.py`, `runtemplate_info.py`, `job_info.py`, `user_info.py`, `credential_info.py`, `token_info.py`, `eventsource_info.py`, `eventrule_info.py`, `companyapp_info.py` - Read-only list/get modules built on `plugins/module_utils/multiflexi_cli.py` (`info_argument_spec` + `run_info`); add a new `*_info` module by calling those two with the CLI `<entity>:list` / `<entity>:get` commands
 - `multiflexi_info.py` - Gather system facts via `multiflexi-cli appstatus`
 - `multiflexi_status.py` - Report MultiFlexi service status
 - `user.py`, `job.py` - User and job management

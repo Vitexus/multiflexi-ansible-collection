@@ -1,0 +1,50 @@
+---
+# Computes demo_showcase_extras: records that are not part of the baseline allowlist.
+- name: Check that the baseline exists
+  ansible.builtin.stat:
+    path: "{{ demo_showcase_allowlist }}"
+  register: _demo_showcase_allowlist_stat
+  become: true
+
+- name: Fail without a baseline
+  ansible.builtin.fail:
+    msg: "No baseline at {{ demo_showcase_allowlist }}; run the role with demo_showcase_mode=seed (or snapshot) on a known-good instance first."
+  when: not _demo_showcase_allowlist_stat.stat.exists
+
+- name: Read the allowlist
+  ansible.builtin.slurp:
+    src: "{{ demo_showcase_allowlist }}"
+  register: _demo_showcase_allowlist_raw
+  become: true
+
+- name: Refuse an empty allowlist (would delete everything)
+  ansible.builtin.assert:
+    that:
+      - (_demo_showcase_allowlist_raw.content | b64decode | from_json).applications | length > 0
+      - (_demo_showcase_allowlist_raw.content | b64decode | from_json).users | length > 0
+    fail_msg: "Allowlist {{ demo_showcase_allowlist }} lists no applications or users; refusing to continue."
+    quiet: true
+
+- name: Collect the current records
+  ansible.builtin.include_tasks: _collect.yml
+
+- name: Compute records outside the baseline
+  ansible.builtin.set_fact:
+    demo_showcase_extras: >-
+      {%- set allow = _demo_showcase_allowlist_raw.content | b64decode | from_json -%}
+      {%- set keys = {'applications': 'uuid'} -%}
+      {%- set out = {} -%}
+      {%- for ent, rows in demo_showcase_current.items() -%}
+        {%- set k = keys.get(ent, 'id') -%}
+        {%- set extra = [] -%}
+        {%- for r in rows if (r[k] | string) not in allow.get(ent, []) -%}
+          {%- set _ = extra.append(r) -%}
+        {%- endfor -%}
+        {%- set _ = out.update({ent: extra}) -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+
+- name: Parse the extras
+  ansible.builtin.set_fact:
+    demo_showcase_extras: "{{ demo_showcase_extras | from_json }}"
+  when: demo_showcase_extras is string

@@ -35,6 +35,8 @@ This collection requires **multiflexi-cli version 2.2.0 or newer** to be install
 * **queue** - Manage queues
 * **eventsource** - Manage event sources (webhook adapter database connections)
 * **eventrule** - Manage event rules (map events to RunTemplates)
+* **company_info** - Get a company or list all companies
+* **application_info**, **runtemplate_info**, **job_info**, **user_info**, **credential_info**, **token_info**, **eventsource_info**, **eventrule_info**, **companyapp_info** - Read-only listing / lookup of the respective records (paging via `limit`, `offset`, `order`, `fields`)
 
 ## Using this collection
 

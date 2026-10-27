@@ -12,6 +12,7 @@ short_description: Get information about a company from MultiFlexi
 
 description:
   - Returns information about a company from MultiFlexi using multiflexi-cli.
+  - When none of I(name), I(slug) or I(ic) is given, all companies are listed in C(companies).
 options:
   name:
     description:
@@ -42,9 +43,22 @@ EXAMPLES = """
   company_info:
     slug: "DEMO"
   register: company_info_result
+
+- name: List all companies
+  company_info:
+  register: company_info_result
 """
 
 RETURN = """
+companies:
+    description: All companies, returned when no selector is given
+    type: list
+    elements: dict
+    returned: when no selector is given
+count:
+    description: Number of listed companies
+    type: int
+    returned: when no selector is given
 company:
     description: Company information or None if not found
     type: dict
@@ -94,7 +108,13 @@ def main():
     elif module.params.get('name'):
         cli_base += ['--name', module.params['name']]
     else:
-        module.fail_json(msg="At least one of 'slug', 'ic', or 'name' must be provided.")
+        # No selector: list all companies
+        try:
+            data = run_cli_command(['multiflexi-cli', 'company:list', '--format', 'json'], module=module)
+        except Exception as e:
+            module.fail_json(msg=str(e))
+        companies = data if isinstance(data, list) else []
+        module.exit_json(changed=False, companies=companies, count=len(companies))
 
     try:
         data = run_cli_command(cli_base, module=module)

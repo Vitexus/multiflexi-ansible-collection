@@ -1,0 +1,110 @@
+# -*- coding: utf-8 -*-
+"""Shared helpers for read-only ``*_info`` modules that wrap ``multiflexi-cli``."""
+
+from __future__ import absolute_import, division, print_function
+
+__metaclass__ = type
+
+import json
+import subprocess
+
+COMMON_LIST_ARGS = dict(
+    limit=dict(type="int", required=False),
+    offset=dict(type="int", required=False),
+    order=dict(type="str", required=False, choices=["A", "D"]),
+    fields=dict(type="list", elements="str", required=False),
+    multiflexi_cli_path=dict(type="str", required=False, default="multiflexi-cli"),
+)
+
+
+def run_cli_json(module, args):
+    """Run ``multiflexi-cli <args> --format json`` and return the parsed JSON.
+
+    A non-zero exit code is tolerated when stdout still holds JSON (the CLI
+    reports ``{"status": "not found"}`` that way); otherwise the task fails.
+    """
+    cmd = [module.params.get("multiflexi_cli_path") or "multiflexi-cli"] + args + ["--format", "json"]
+    if module._verbosity >= 2:
+        module.warn("Running CLI command: %s" % " ".join(cmd))
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+    except OSError as exc:
+        module.fail_json(msg="Failed to run %s: %s" % (cmd[0], exc))
+    if module._verbosity >= 2:
+        module.warn("CLI stdout: %s" % result.stdout.strip())
+        if result.stderr.strip():
+            module.warn("CLI stderr: %s" % result.stderr.strip())
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        if result.returncode != 0:
+            module.fail_json(msg="multiflexi-cli error: %s" % (result.stderr.strip() or result.stdout.strip()), rc=result.returncode)
+        module.fail_json(msg="multiflexi-cli returned invalid JSON: %s" % result.stdout.strip()[:200])
+
+
+def _is_not_found(data):
+    return isinstance(data, dict) and str(data.get("status", "")).lower() in ("not found", "not_found")
+
+
+def _fail_on_error(module, data):
+    if isinstance(data, dict) and str(data.get("status", "")).lower() == "error":
+        module.fail_json(msg="multiflexi-cli error: %s" % data.get("message", data))
+
+
+def _rows(data):
+    """Normalise a list response to a list of dicts."""
+    if data is None:
+        return []
+    if isinstance(data, dict):
+        for key in ("items", "data", "results"):
+            if isinstance(data.get(key), list):
+                return data[key]
+        return [data] if data else []
+    return list(data)
+
+
+def info_argument_spec(selectors=None, filters=None):
+    """Build an argument_spec: selectors (get by key), filters (list filters) and paging options."""
+    spec = dict(COMMON_LIST_ARGS)
+    for name, kind in (selectors or {}).items():
+        spec[name] = dict(type=kind, required=False)
+    for name, kind in (filters or {}).items():
+        spec[name] = dict(type=kind, required=False)
+    return spec
+
+
+def run_info(module, singular, plural, list_command, get_command=None, selectors=None, filters=None):
+    """Execute an info module.
+
+    ``selectors`` maps module params to ``<get_command>`` CLI options (``{"id": "--id"}``).
+    The first one given is used to fetch a single record; with none given the whole list is returned.
+    ``filters`` maps module params to ``<list_command>`` CLI options.
+    """
+    params = module.params
+    if get_command:
+        for name, option in (selectors or {}).items():
+            if params.get(name) is not None:
+                args = [get_command, option, str(params[name])]
+                if params.get("fields"):
+                    args += ["--fields", ",".join(params["fields"])]
+                data = run_cli_json(module, args)
+                _fail_on_error(module, data)
+                if _is_not_found(data) or not data:
+                    module.exit_json(changed=False, found=False, **{singular: None})
+                module.exit_json(changed=False, found=True, **{singular: data})
+
+    args = [list_command]
+    for name, option in (filters or {}).items():
+        if params.get(name) is not None:
+            args += [option, str(params[name])]
+    for name in ("limit", "offset", "order"):
+        if params.get(name) is not None:
+            args += ["--%s" % name, str(params[name])]
+    if params.get("fields"):
+        args += ["--fields", ",".join(params["fields"])]
+    data = run_cli_json(module, args)
+    _fail_on_error(module, data)
+    if _is_not_found(data):
+        data = []
+    rows = _rows(data)
+    module.exit_json(changed=False, count=len(rows), **{plural: rows})

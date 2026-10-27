@@ -1,0 +1,101 @@
+---
+# Containment + evidence. Deliberately does NOT clean up or restore: after host-level
+# indicators the instance is rebuilt from a clean image (see README), not trusted again.
+- name: Name the incident directory
+  ansible.builtin.set_fact:
+    _demo_showcase_incident_dir: "{{ demo_showcase_backup_dir }}/incident-{{ now(utc=true).strftime('%Y%m%dT%H%M%SZ') }}"
+
+- name: Create the incident directory
+  ansible.builtin.file:
+    path: "{{ _demo_showcase_incident_dir }}"
+    state: directory
+    mode: "0700"
+    owner: "{{ demo_showcase_owner }}"
+    group: "{{ demo_showcase_group }}"
+  become: true
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Contain - stop the workers (and the web service)
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+  loop: >-
+    {{ (demo_showcase_services + ([demo_showcase_web_service] if demo_showcase_incident_stop_web | bool else []))
+       | select('in', ansible_facts.services) | list }}
+  become: true
+
+- name: Collect evidence
+  ansible.builtin.shell: "{{ item.cmd }} > {{ _demo_showcase_incident_dir }}/{{ item.name }}.txt 2>&1"
+  args:
+    executable: /bin/bash
+  loop:
+    - { name: processes, cmd: "ps auxwwf" }
+    - { name: sockets, cmd: "ss -tupan" }
+    - { name: journal, cmd: "journalctl --no-pager -n 5000" }
+    - { name: logins, cmd: "last -n 100; w" }
+    - { name: enabled-units, cmd: "systemctl list-unit-files --state=enabled" }
+    - { name: cron, cmd: "ls -la /etc/cron.d /etc/cron.hourly /etc/cron.daily /var/spool/cron/crontabs" }
+    - { name: scratch-dirs, cmd: "ls -laR /tmp /var/tmp /dev/shm" }
+    - { name: recent-files, cmd: "find / -xdev -type f -mmin -1440 -not -path '/proc/*' -not -path '/var/lib/mysql/*' -not -path '/var/log/*' | head -n 3000" }
+    - { name: listening-ports, cmd: "{{ _demo_showcase_ports_cmd }}" }
+    - { name: watched-manifest, cmd: "{{ _demo_showcase_manifest_cmd }}" }
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Keep a forensic copy of the database
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    umask 077;
+    mysqldump --single-transaction --routines --triggers
+    --databases {{ demo_showcase_db_name }} | gzip -9 > {{ _demo_showcase_incident_dir }}/database.sql.gz
+  args:
+    executable: /bin/bash
+  changed_when: true
+  failed_when: false
+  become: true
+
+- name: Keep the audit report
+  ansible.builtin.copy:
+    src: "{{ demo_showcase_audit_report }}"
+    dest: "{{ _demo_showcase_incident_dir }}/audit-latest.json"
+    remote_src: true
+    mode: "0600"
+  failed_when: false
+  become: true
+
+- name: Raise the alarm in the journal
+  ansible.builtin.command:
+    argv:
+      - logger
+      - -t
+      - demo-guard
+      - -p
+      - auth.alert
+      - "INCIDENT on {{ inventory_hostname }}: evidence in {{ _demo_showcase_incident_dir }}, services stopped"
+  changed_when: false
+  become: true
+
+- name: Notify by e-mail
+  community.general.mail:
+    host: "{{ demo_showcase_notify_mail_host }}"
+    from: "{{ demo_showcase_notify_mail_from }}"
+    to: "{{ demo_showcase_notify_mail_to }}"
+    subject: "[demo-guard] INCIDENT on {{ inventory_hostname }}"
+    body: |
+      Host-level indicators were found on {{ inventory_hostname }}.
+      Services were stopped. Evidence: {{ _demo_showcase_incident_dir }}
+      Findings: {{ demo_showcase_host_findings | default({}) | to_nice_json }}
+  delegate_to: localhost
+  when: demo_showcase_notify_mail_to | length > 0
+
+- name: Next steps
+  ansible.builtin.debug:
+    msg:
+      - "Evidence saved in {{ _demo_showcase_incident_dir }} on {{ inventory_hostname }}."
+      - "Do NOT restart the services on this host. Rebuild it from a clean image/snapshot, redeploy and run mode=seed."
+      - "Rotate secrets that lived on the host (DB password, Zabbix PSK, API tokens) and check the network logs for connections from it."

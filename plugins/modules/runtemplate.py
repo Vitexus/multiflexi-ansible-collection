@@ -83,6 +83,22 @@ options:
             - Schedule time for launch (Y-m-d H:i:s or "now").
         required: false
         type: str
+    auto_credentials:
+        description:
+            - Assign credentials automatically, based only on the application's requirements.
+            - For every requirement (e.g. C(AbraFlexi)) the company must have exactly one matching credential.
+            - The task fails if a requirement has no credential or more than one candidate; nothing is assigned in that case.
+            - Only used with I(state=present).
+        required: false
+        type: bool
+        default: false
+    credential_requirements:
+        description:
+            - Limit I(auto_credentials) to these requirements (credential prototype codes, e.g. C(AbraFlexi)).
+            - Implies I(auto_credentials).
+        required: false
+        type: list
+        elements: str
 """
 
 EXAMPLES = """
@@ -94,6 +110,15 @@ EXAMPLES = """
     app_uuid: "78fa718c-7ca2-4a38-840e-8e5f0db06432"
     company: "DEMO"
     active: true
+
+# Create a run template and let it pick the AbraFlexi credential of its company
+- name: Run template with credential from requirements
+  vitexus.multiflexi.runtemplate:
+    state: present
+    name: "abraflexi_import"
+    app_uuid: "78fa718c-7ca2-4a38-840e-8e5f0db06432"
+    company: "DEMO"
+    credential_requirements: [AbraFlexi]
 
 # Get a run template
 - name: Get run template
@@ -188,6 +213,21 @@ def find_existing_runtemplate(module):
     return None
 
 
+def assign_credentials(module, tpl_id):
+    """Assign credentials by application requirements. Returns True when something changed."""
+    args = ['run-template:assign-credential', '--id', str(tpl_id), '--auto']
+    for req in module.params.get('credential_requirements') or []:
+        args += ['--requirement', req]
+    res = run_cli(module, args)
+    if isinstance(res, dict) and res.get('status') == 'ok':
+        return bool(res.get('changed'))
+    module.fail_json(msg=f"Credential assignment failed: {res}")
+
+
+def want_credentials(module):
+    return module.params.get('auto_credentials') or bool(module.params.get('credential_requirements'))
+
+
 def run_module():
     module_args = dict(
         state=dict(type='str', required=True, choices=['present', 'absent', 'get']),
@@ -203,6 +243,8 @@ def run_module():
         config=dict(type='dict', required=False),
         executor=dict(type='str', required=False),
         schedule_time=dict(type='str', required=False),
+        auto_credentials=dict(type='bool', required=False, default=False),
+        credential_requirements=dict(type='list', elements='str', required=False),
     )
 
     result = dict(
@@ -248,10 +290,12 @@ def run_module():
                         changed = True
             
             # Handle config dictionary
+            # (config is returned flat next to the template fields; compare as strings)
             if module.params.get('config'):
                 for k, v in module.params['config'].items():
-                    update_args += ['--config', f'{k}={v}']
-                changed = True
+                    if str(tpl.get(k)) != str(v):
+                        update_args += ['--config', f'{k}={v}']
+                        changed = True
 
             # Prefer app_uuid over app_id if provided
             if module.params.get('app_uuid'):
@@ -264,6 +308,11 @@ def run_module():
                     changed = True
 
             if not changed:
+                if want_credentials(module) and not module.check_mode:
+                    # CLI exits non-zero (-> task fails) on missing/ambiguous requirements
+                    if assign_credentials(module, tpl['id']):
+                        result['changed'] = True
+                        tpl = run_cli(module, ['run-template:get', '--id', str(tpl['id'])])
                 result['runtemplate'] = tpl
                 module.exit_json(**result)
 
@@ -273,6 +322,8 @@ def run_module():
                 module.exit_json(**result)
 
             run_cli(module, update_args)
+            if want_credentials(module):
+                assign_credentials(module, tpl['id'])
             latest = run_cli(module, ['run-template:get', '--id', str(tpl['id'])])
             result['changed'] = True
             result['runtemplate'] = latest
@@ -309,6 +360,9 @@ def run_module():
                 tpl_id = created.get('id')
             elif isinstance(created, list) and len(created) > 0:
                 tpl_id = created[0].get('id')
+
+            if tpl_id and want_credentials(module):
+                assign_credentials(module, tpl_id)
 
             if tpl_id:
                 latest = run_cli(module, ['run-template:get', '--id', str(tpl_id)])

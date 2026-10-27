@@ -1,0 +1,11 @@
+---
+# Internal commands shared by snapshot and audit so both produce comparable output.
+_demo_showcase_manifest_cmd: >-
+  find {{ demo_showcase_watch_paths | join(' ') }} -type f -print0 2>/dev/null
+  | sort -z | xargs -0 -r sha256sum
+_demo_showcase_ports_cmd: >-
+  ss -H -tln | awk '{print $4}' | sort -u
+_demo_showcase_scratch_argv: >-
+  {{ ['find'] + demo_showcase_scratch_dirs
+     + ['-xdev', '-type', 'f', '-perm', '/111',
+        '-not', '-path', '/tmp/ansible*', '-not', '-path', '/tmp/.ansible*'] }}

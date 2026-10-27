@@ -1,0 +1,102 @@
+---
+# What to do: seed | snapshot | reconcile | audit | reset | incident
+demo_showcase_mode: reconcile
+
+# --- Paths ------------------------------------------------------------------
+demo_showcase_owner: root
+demo_showcase_group: root
+demo_showcase_state_dir: /var/lib/multiflexi-demo
+demo_showcase_backup_dir: /var/backups/multiflexi-demo
+demo_showcase_allowlist: "{{ demo_showcase_state_dir }}/allowlist.json"
+demo_showcase_manifest: "{{ demo_showcase_state_dir }}/files.sha256"
+demo_showcase_ports_baseline: "{{ demo_showcase_state_dir }}/listening-ports.txt"
+demo_showcase_dump: "{{ demo_showcase_backup_dir }}/baseline.sql.gz"
+demo_showcase_dump_sha256_file: "{{ demo_showcase_state_dir }}/baseline.sql.gz.sha256"
+demo_showcase_audit_report: "{{ demo_showcase_state_dir }}/audit-latest.json"
+
+# --- Database (only MySQL/MariaDB is supported by snapshot/reset) -----------
+demo_showcase_db_type: mysql
+demo_showcase_db_name: multiflexi
+# Optional tamper protection: sha256 of the baseline dump kept OUTSIDE the host
+# (e.g. in the Semaphore environment). When set, reset refuses a different dump.
+demo_showcase_expected_dump_sha256: ""
+
+# --- Services stopped during reset / incident (only existing units are touched)
+demo_showcase_services:
+  - multiflexi-scheduler.service
+  - multiflexi-executor.service
+demo_showcase_web_service: apache2.service
+
+# --- Showcase content -------------------------------------------------------
+# Fictional companies the installed applications are presented under.
+demo_showcase_companies:
+  - { slug: ucetni-nova, name: "Účetní kancelář Nová s.r.o.", ic: "27000011", email: "info@ucetni-nova.example" }
+  - { slug: eshop-kolo, name: "Eshop Kolo a.s.", ic: "27000028", email: "podpora@eshop-kolo.example" }
+  - { slug: stavby-moravec, name: "Stavby Moravec s.r.o.", ic: "27000035", email: "kancelar@stavby-moravec.example" }
+# How many installed applications get a run template per company.
+demo_showcase_apps_per_company: 6
+# Interval codes assigned round-robin to the generated run templates.
+demo_showcase_intervals: ["d", "h", "w", "m"]
+# Generated run templates stay inactive so the demo does not pile up failing jobs.
+demo_showcase_runtemplates_active: false
+# Applications that must not be presented (matched against the application name).
+demo_showcase_app_name_skiplist: []
+
+# --- Reconcile --------------------------------------------------------------
+# Entities that are deleted when they are not part of the baseline allowlist.
+# Applications, tokens, credentials and event sources/rules are where a visitor
+# can get code executed or data exfiltrated; companies/run templates are left for
+# the daily reset so visitors can experiment with them.
+demo_showcase_reconcile_entities:
+  - eventrules
+  - eventsources
+  - tokens
+  - credentials
+  - applications
+  - users
+# Re-assert the showcase content (companies, assignments, run templates) on reconcile.
+demo_showcase_reconcile_reapply: true
+# Observe only: archive and report foreign records but do not delete them.
+demo_showcase_reconcile_dry_run: false
+
+# --- Observation ------------------------------------------------------------
+# The demo is deliberately open to anonymous experiments so its weaknesses show up.
+# Everything reconcile is about to remove is archived here first (full records,
+# e.g. the executable of a visitor-created application) before it is deleted.
+demo_showcase_observed_dir: "{{ demo_showcase_state_dir }}/observed"
+demo_showcase_observed_retention_days: 90
+
+# --- Audit ------------------------------------------------------------------
+# Paths whose file contents are hashed into the baseline manifest.
+demo_showcase_watch_paths:
+  - /etc/multiflexi
+  - /etc/cron.d
+  - /etc/cron.hourly
+  - /etc/cron.daily
+  - /etc/systemd/system
+  - /etc/ld.so.preload
+  - /root/.ssh
+# Directories scanned for dropped executables.
+demo_showcase_scratch_dirs: [/tmp, /var/tmp, /dev/shm]
+demo_showcase_check_debsums: true
+# dpkg-query package globs verified by debsums (keep it short: this runs every few minutes).
+demo_showcase_debsums_globs:
+  - "multiflexi*"
+  - "php-vitexsoftware-*"
+  - "apache2*"
+  - "openssh-server"
+# Run the incident handler automatically when the audit finds host indicators.
+demo_showcase_auto_incident: true
+
+# --- Incident ---------------------------------------------------------------
+# Stop the web service during an incident (the reverse proxy then answers 502/503).
+demo_showcase_incident_stop_web: true
+# Optional e-mail notification (community.general.mail); empty disables it.
+demo_showcase_notify_mail_to: ""
+demo_showcase_notify_mail_from: "demo-guard@{{ ansible_facts.fqdn | default('localhost') }}"
+demo_showcase_notify_mail_host: localhost
+
+# --- Reset smoke test -------------------------------------------------------
+# Backend is published under /multiflexi/ behind the reverse proxy.
+demo_showcase_smoke_url: "http://127.0.0.1/multiflexi/"
+demo_showcase_smoke_status: [200, 301, 302]

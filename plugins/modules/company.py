@@ -211,7 +211,14 @@ def run_module():
             for param in ['name', 'customer', 'enabled', 'settings', 'logo', 'ic', 'DatCreate', 'DatUpdate', 'email', 'zabbix_host']:
                 desired = module.params.get(param)
                 if desired is not None:
-                    if not existing or str(existing.get(param)) != str(int(desired)) if isinstance(desired, bool) else str(desired):
+                    current = existing.get(param) if existing else None
+                    if isinstance(desired, bool):
+                        wanted = str(int(desired))
+                        current = '' if current is None else str(int(current)) if str(current).isdigit() else str(current)
+                    else:
+                        wanted = str(desired)
+                        current = '' if current is None else str(current)
+                    if not existing or current != wanted:
                         update_fields[param] = desired
                         changed = True
             if not existing:

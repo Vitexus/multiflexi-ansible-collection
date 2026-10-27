@@ -1,0 +1,75 @@
+---
+# Full reset: restore the baseline database dump, restart the services, smoke test, audit.
+# Files created by visitors outside the database are not touched here; the audit reports them.
+- name: Check that the baseline dump exists
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    checksum_algorithm: sha256
+  loop:
+    - "{{ demo_showcase_dump }}"
+    - "{{ demo_showcase_dump_sha256_file }}"
+  register: _demo_showcase_baseline_files
+  become: true
+
+- name: Fail without a baseline
+  ansible.builtin.fail:
+    msg: "Baseline dump or checksum missing in {{ demo_showcase_backup_dir }} / {{ demo_showcase_state_dir }}; run mode=seed first."
+  when: _demo_showcase_baseline_files.results | rejectattr('stat.exists') | list | length > 0
+
+- name: Read the recorded checksum
+  ansible.builtin.slurp:
+    src: "{{ demo_showcase_dump_sha256_file }}"
+  register: _demo_showcase_recorded_sha
+  become: true
+
+- name: Verify the dump was not modified
+  ansible.builtin.assert:
+    that:
+      - _demo_showcase_baseline_files.results[0].stat.checksum == (_demo_showcase_recorded_sha.content | b64decode | trim)
+      - demo_showcase_expected_dump_sha256 == '' or _demo_showcase_baseline_files.results[0].stat.checksum == demo_showcase_expected_dump_sha256
+    fail_msg: "Baseline dump checksum mismatch - refusing to restore a possibly tampered dump."
+    quiet: true
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Pick the units that exist on this host
+  ansible.builtin.set_fact:
+    _demo_showcase_worker_units: "{{ demo_showcase_services | select('in', ansible_facts.services) | list }}"
+    _demo_showcase_web_units: "{{ [demo_showcase_web_service] | select('in', ansible_facts.services) | list }}"
+
+- name: Stop the web service and the workers
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+  loop: "{{ _demo_showcase_web_units + _demo_showcase_worker_units }}"
+  become: true
+
+- name: Restore the baseline database
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    zcat {{ demo_showcase_dump }} | mysql
+  args:
+    executable: /bin/bash
+  changed_when: true
+  become: true
+
+- name: Start the workers and the web service
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+  loop: "{{ _demo_showcase_worker_units + _demo_showcase_web_units }}"
+  become: true
+
+- name: Smoke test the web interface
+  ansible.builtin.uri:
+    url: "{{ demo_showcase_smoke_url }}"
+    status_code: "{{ demo_showcase_smoke_status }}"
+    follow_redirects: none
+  register: _demo_showcase_smoke
+  retries: 6
+  delay: 5
+  until: _demo_showcase_smoke.status in demo_showcase_smoke_status
+
+- name: Audit the restored instance
+  ansible.builtin.include_tasks: audit.yml

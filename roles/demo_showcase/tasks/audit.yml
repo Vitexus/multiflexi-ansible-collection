@@ -1,0 +1,109 @@
+---
+# Read-only detection. Classifies the instance as clean / data_abuse / host_compromise,
+# writes a JSON report and (for host_compromise) runs the incident handler and fails the run.
+- name: Find records outside the baseline
+  ansible.builtin.include_tasks: _extras.yml
+
+- name: Verify packaged files with debsums
+  ansible.builtin.shell: >-
+    debsums -c $(dpkg-query -W -f='${binary:Package}\n' {{ demo_showcase_debsums_globs | map('quote') | join(' ') }} 2>/dev/null) 2>/dev/null
+  args:
+    executable: /bin/bash
+  register: _demo_showcase_debsums
+  changed_when: false
+  failed_when: false
+  when: demo_showcase_check_debsums | bool
+  become: true
+
+- name: Compare watched files with the baseline manifest
+  ansible.builtin.shell: "{{ _demo_showcase_manifest_cmd }} | diff -u {{ demo_showcase_manifest }} - | tail -n +3"  # noqa risky-shell-pipe
+  args:
+    executable: /bin/bash
+  register: _demo_showcase_manifest_diff
+  changed_when: false
+  failed_when: _demo_showcase_manifest_diff.rc not in [0, 1]
+  become: true
+
+# Only NEW TCP listeners count (a backdoor); a listener that disappeared is not a finding.
+- name: Look for new listening TCP ports compared with the baseline
+  ansible.builtin.shell: "{{ _demo_showcase_ports_cmd }} | diff -u {{ demo_showcase_ports_baseline }} - | grep '^+[^+]'"  # noqa risky-shell-pipe
+  args:
+    executable: /bin/bash
+  register: _demo_showcase_ports_diff
+  changed_when: false
+  failed_when: _demo_showcase_ports_diff.rc not in [0, 1]
+  become: true
+
+- name: Look for executables dropped into scratch directories
+  ansible.builtin.command:
+    argv: "{{ _demo_showcase_scratch_argv }}"
+  register: _demo_showcase_scratch
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Evaluate the findings
+  ansible.builtin.set_fact:
+    demo_showcase_host_findings: >-
+      {{ dict([
+           ['changed_packaged_files', _demo_showcase_debsums.stdout_lines | default([])],
+           ['changed_watched_files', _demo_showcase_manifest_diff.stdout_lines],
+           ['new_listening_ports', _demo_showcase_ports_diff.stdout_lines],
+           ['executables_in_scratch_dirs', _demo_showcase_scratch.stdout_lines],
+         ] | selectattr(1) | list) }}
+    demo_showcase_data_findings: >-
+      {{ demo_showcase_extras | dict2items
+         | selectattr('key', 'in', demo_showcase_reconcile_entities)
+         | selectattr('value') | list | items2dict }}
+
+- name: Classify the instance
+  ansible.builtin.set_fact:
+    demo_showcase_audit_result: >-
+      {{ 'host_compromise' if demo_showcase_host_findings | length > 0
+         else 'data_abuse' if demo_showcase_data_findings | length > 0
+         else 'clean' }}
+
+- name: Write the audit report
+  ansible.builtin.copy:
+    dest: "{{ demo_showcase_audit_report }}"
+    content: "{{ report | to_nice_json }}\n"
+    mode: "0600"
+    owner: "{{ demo_showcase_owner }}"
+    group: "{{ demo_showcase_group }}"
+  vars:
+    report:
+      time: "{{ now(utc=true).isoformat() }}"
+      result: "{{ demo_showcase_audit_result }}"
+      host_findings: "{{ demo_showcase_host_findings }}"
+      data_findings: "{{ demo_showcase_data_findings }}"
+  become: true
+
+- name: Log the result to the journal
+  ansible.builtin.command:
+    argv:
+      - logger
+      - -t
+      - demo-guard
+      - -p
+      - >-
+        {{ {'host_compromise': 'auth.alert', 'data_abuse': 'auth.warning'}.get(demo_showcase_audit_result, 'auth.info') }}
+      - "audit result={{ demo_showcase_audit_result }}"
+  changed_when: false
+  become: true
+
+- name: Report data-level abuse (reconcile removes it)
+  ansible.builtin.debug:
+    msg: "Foreign records found (cleaned by reconcile): {{ demo_showcase_data_findings | to_json | truncate(2000) }}"
+  when: demo_showcase_audit_result == 'data_abuse'
+
+- name: Handle host-level indicators
+  when: demo_showcase_audit_result == 'host_compromise'
+  block:
+    - name: Run the incident handler
+      ansible.builtin.include_tasks: incident.yml
+      when: demo_showcase_auto_incident | bool
+
+    - name: Fail the run so the compromise is visible in Semaphore
+      ansible.builtin.fail:
+        msg: >-
+          Host indicators found on {{ inventory_hostname }}: {{ demo_showcase_host_findings | to_json | truncate(2000) }}

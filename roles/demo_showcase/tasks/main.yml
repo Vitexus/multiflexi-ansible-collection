@@ -1,0 +1,13 @@
+---
+- name: Check the requested mode
+  ansible.builtin.assert:
+    that:
+      - demo_showcase_mode in ['seed', 'snapshot', 'reconcile', 'audit', 'reset', 'incident']
+      - demo_showcase_db_type == 'mysql' or demo_showcase_mode not in ['seed', 'snapshot', 'reset', 'incident']
+    fail_msg: >-
+      demo_showcase_mode must be one of seed, snapshot, reconcile, audit, reset, incident
+      (snapshot/reset need demo_showcase_db_type=mysql).
+    quiet: true
+
+- name: Run demo_showcase mode {{ demo_showcase_mode }}
+  ansible.builtin.include_tasks: "{{ demo_showcase_mode }}.yml"

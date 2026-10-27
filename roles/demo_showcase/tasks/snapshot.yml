@@ -1,0 +1,83 @@
+---
+# Records the baseline (allowlist, file manifest, listening ports, database dump).
+# Run it only on a known-good instance.
+- name: Create state and backup directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+    owner: "{{ demo_showcase_owner }}"
+    group: "{{ demo_showcase_group }}"
+  loop:
+    - "{{ demo_showcase_state_dir }}"
+    - "{{ demo_showcase_backup_dir }}"
+  become: true
+
+- name: Collect the current records
+  ansible.builtin.include_tasks: _collect.yml
+
+- name: Write the allowlist
+  ansible.builtin.copy:
+    dest: "{{ demo_showcase_allowlist }}"
+    content: "{{ allowlist | to_nice_json }}\n"
+    mode: "0600"
+    owner: "{{ demo_showcase_owner }}"
+    group: "{{ demo_showcase_group }}"
+  vars:
+    allowlist:
+      applications: "{{ demo_showcase_current.applications | map(attribute='uuid') | map('string') | list }}"
+      users: "{{ demo_showcase_current.users | map(attribute='id') | map('string') | list }}"
+      companies: "{{ demo_showcase_current.companies | map(attribute='id') | map('string') | list }}"
+      runtemplates: "{{ demo_showcase_current.runtemplates | map(attribute='id') | map('string') | list }}"
+      credentials: "{{ demo_showcase_current.credentials | map(attribute='id') | map('string') | list }}"
+      tokens: "{{ demo_showcase_current.tokens | map(attribute='id') | map('string') | list }}"
+      eventsources: "{{ demo_showcase_current.eventsources | map(attribute='id') | map('string') | list }}"
+      eventrules: "{{ demo_showcase_current.eventrules | map(attribute='id') | map('string') | list }}"
+  become: true
+
+- name: Write the file manifest
+  ansible.builtin.shell: "{{ _demo_showcase_manifest_cmd }} > {{ demo_showcase_manifest }}"  # noqa risky-shell-pipe
+  args:
+    executable: /bin/bash
+  changed_when: true
+  become: true
+
+- name: Write the listening ports baseline
+  ansible.builtin.shell: "{{ _demo_showcase_ports_cmd }} > {{ demo_showcase_ports_baseline }}"  # noqa risky-shell-pipe
+  args:
+    executable: /bin/bash
+  changed_when: true
+  become: true
+
+- name: Dump the database
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    umask 077;
+    mysqldump --single-transaction --routines --triggers --add-drop-database
+    --databases {{ demo_showcase_db_name }} | gzip -9 > {{ demo_showcase_dump }}
+  args:
+    executable: /bin/bash
+  changed_when: true
+  become: true
+
+- name: Record the dump checksum
+  ansible.builtin.stat:
+    path: "{{ demo_showcase_dump }}"
+    checksum_algorithm: sha256
+  register: _demo_showcase_dump_stat
+  become: true
+
+- name: Store the dump checksum
+  ansible.builtin.copy:
+    dest: "{{ demo_showcase_dump_sha256_file }}"
+    content: "{{ _demo_showcase_dump_stat.stat.checksum }}\n"
+    mode: "0600"
+    owner: "{{ demo_showcase_owner }}"
+    group: "{{ demo_showcase_group }}"
+  become: true
+
+- name: Show the checksum to keep outside the host
+  ansible.builtin.debug:
+    msg: >-
+      Baseline stored. Keep demo_showcase_expected_dump_sha256={{ _demo_showcase_dump_stat.stat.checksum }}
+      in the Semaphore environment so reset can detect a tampered dump.

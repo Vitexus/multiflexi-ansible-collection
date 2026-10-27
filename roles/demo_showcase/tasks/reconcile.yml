@@ -1,0 +1,140 @@
+---
+# Removes records that are not part of the baseline (see demo_showcase_reconcile_entities)
+# and re-asserts the showcase content. Cheap and idempotent; safe to run every few minutes.
+# What visitors created is archived in demo_showcase_observed_dir BEFORE it is deleted, so
+# their experiments (the point of an open demo) can be studied afterwards.
+- name: Find records outside the baseline
+  ansible.builtin.include_tasks: _extras.yml
+
+- name: Select the foreign records handled by this run
+  ansible.builtin.set_fact:
+    demo_showcase_foreign: >-
+      {{ demo_showcase_extras | dict2items
+         | selectattr('key', 'in', demo_showcase_reconcile_entities)
+         | selectattr('value') | list | items2dict }}
+    demo_showcase_removed: >-
+      {{ demo_showcase_reconcile_entities
+         | map('extract', demo_showcase_extras)
+         | map('length')
+         | sum }}
+
+- name: Archive the foreign records before they are removed
+  when: demo_showcase_removed | int > 0
+  become: true
+  block:
+    - name: Create the observation directory
+      ansible.builtin.file:
+        path: "{{ demo_showcase_observed_dir }}"
+        state: directory
+        mode: "0700"
+        owner: "{{ demo_showcase_owner }}"
+        group: "{{ demo_showcase_group }}"
+
+    - name: Write the observation record
+      ansible.builtin.copy:
+        dest: "{{ demo_showcase_observed_dir }}/{{ now(utc=true).strftime('%Y%m%dT%H%M%SZ') }}-reconcile.json"
+        content: "{{ record | to_nice_json }}\n"
+        mode: "0600"
+        owner: "{{ demo_showcase_owner }}"
+        group: "{{ demo_showcase_group }}"
+      vars:
+        record:
+          time: "{{ now(utc=true).isoformat() }}"
+          host: "{{ inventory_hostname }}"
+          dry_run: "{{ demo_showcase_reconcile_dry_run | bool }}"
+          records: "{{ demo_showcase_foreign }}"
+
+    - name: Log the observation to the journal (picked up by the OTEL journald receiver)
+      ansible.builtin.command:
+        argv:
+          - logger
+          - -t
+          - demo-guard
+          - -p
+          - auth.warning
+          - >-
+            {{ 'observed' if demo_showcase_reconcile_dry_run | bool else 'removed' }}
+            {{ demo_showcase_removed }} foreign record(s):
+            {{ demo_showcase_foreign | to_json | truncate(1500) }}
+      changed_when: false
+
+# Order matters: dependants first (rules before sources, tokens before users).
+- name: Remove foreign records
+  when: not (demo_showcase_reconcile_dry_run | bool)
+  become: true
+  block:
+    - name: Remove foreign event rules
+      vitexus.multiflexi.eventrule:
+        state: absent
+        eventrule_id: "{{ item.id }}"
+      loop: "{{ demo_showcase_extras.eventrules }}"
+      loop_control:
+        label: "event rule {{ item.id }}"
+      when: "'eventrules' in demo_showcase_reconcile_entities"
+
+    - name: Remove foreign event sources
+      vitexus.multiflexi.eventsource:
+        state: absent
+        eventsource_id: "{{ item.id }}"
+      loop: "{{ demo_showcase_extras.eventsources }}"
+      loop_control:
+        label: "event source {{ item.id }}"
+      when: "'eventsources' in demo_showcase_reconcile_entities"
+
+    - name: Remove foreign API tokens
+      vitexus.multiflexi.token:
+        state: absent
+        token_id: "{{ item.id }}"
+      loop: "{{ demo_showcase_extras.tokens }}"
+      loop_control:
+        label: "token {{ item.id }}"
+      when: "'tokens' in demo_showcase_reconcile_entities"
+
+    - name: Remove foreign credentials
+      vitexus.multiflexi.credential:
+        state: absent
+        credential_id: "{{ item.id }}"
+      loop: "{{ demo_showcase_extras.credentials }}"
+      loop_control:
+        label: "credential {{ item.id }}"
+      when: "'credentials' in demo_showcase_reconcile_entities"
+
+    - name: Remove foreign applications (anything that is not a packaged application)
+      vitexus.multiflexi.application:
+        state: absent
+        app_id: "{{ item.id }}"
+      loop: "{{ demo_showcase_extras.applications }}"
+      loop_control:
+        label: "{{ item.name | default(item.uuid) }}"
+      when: "'applications' in demo_showcase_reconcile_entities"
+
+    - name: Remove foreign users
+      vitexus.multiflexi.user:
+        state: absent
+        user_id: "{{ item.id }}"
+      loop: "{{ demo_showcase_extras.users }}"
+      loop_control:
+        label: "{{ item.login | default(item.id) }}"
+      when: "'users' in demo_showcase_reconcile_entities"
+
+- name: Find expired observation records
+  ansible.builtin.find:
+    paths: "{{ demo_showcase_observed_dir }}"
+    age: "{{ demo_showcase_observed_retention_days }}d"
+    patterns: "*-reconcile.json"
+  register: _demo_showcase_expired
+  failed_when: false
+  become: true
+
+- name: Delete expired observation records
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ _demo_showcase_expired.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  become: true
+
+- name: Re-assert the showcase content
+  ansible.builtin.include_tasks: content.yml
+  when: demo_showcase_reconcile_reapply | bool
