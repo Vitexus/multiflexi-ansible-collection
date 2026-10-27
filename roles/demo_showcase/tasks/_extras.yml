@@ -32,19 +32,30 @@
   ansible.builtin.set_fact:
     _demo_showcase_allow: "{{ _demo_showcase_allowlist_raw.content | b64decode | from_json }}"
 
+# The CLI is not consistent about ids being strings or integers: accept both forms.
+- name: Prepare id lists
+  ansible.builtin.set_fact:
+    _demo_showcase_allow_ids:
+      users: "{{ _demo_showcase_allow.users + (_demo_showcase_allow.users | map('int') | list) }}"
+      companies: "{{ _demo_showcase_allow.companies + (_demo_showcase_allow.companies | map('int') | list) }}"
+      runtemplates: "{{ _demo_showcase_allow.runtemplates + (_demo_showcase_allow.runtemplates | map('int') | list) }}"
+      credentials: "{{ _demo_showcase_allow.credentials + (_demo_showcase_allow.credentials | map('int') | list) }}"
+      tokens: "{{ _demo_showcase_allow.tokens + (_demo_showcase_allow.tokens | map('int') | list) }}"
+      eventsources: "{{ _demo_showcase_allow.eventsources + (_demo_showcase_allow.eventsources | map('int') | list) }}"
+      eventrules: "{{ _demo_showcase_allow.eventrules + (_demo_showcase_allow.eventrules | map('int') | list) }}"
+
 # Record values (names, executables, ...) are chosen by visitors. They must never go through a
 # to_json/from_json round trip or any other step that produces fresh strings: Ansible keeps the
 # registered module results marked untrusted, but a new plain string holding "{{ ... }}" would be
 # templated when the variable is used later. Only filters that keep the original objects are used.
-# Ids are compared both as strings and as integers because the CLI is not consistent about it.
 - name: Compute records outside the baseline
   ansible.builtin.set_fact:
     demo_showcase_extras:
       applications: "{{ demo_showcase_current.applications | rejectattr('uuid', 'in', _demo_showcase_allow.applications) | list }}"
-      users: "{{ demo_showcase_current.users | rejectattr('id', 'in', _demo_showcase_allow.users + (_demo_showcase_allow.users | map('int') | list)) | list }}"
-      companies: "{{ demo_showcase_current.companies | rejectattr('id', 'in', _demo_showcase_allow.companies + (_demo_showcase_allow.companies | map('int') | list)) | list }}"
-      runtemplates: "{{ demo_showcase_current.runtemplates | rejectattr('id', 'in', _demo_showcase_allow.runtemplates + (_demo_showcase_allow.runtemplates | map('int') | list)) | list }}"
-      credentials: "{{ demo_showcase_current.credentials | rejectattr('id', 'in', _demo_showcase_allow.credentials + (_demo_showcase_allow.credentials | map('int') | list)) | list }}"
-      tokens: "{{ demo_showcase_current.tokens | rejectattr('id', 'in', _demo_showcase_allow.tokens + (_demo_showcase_allow.tokens | map('int') | list)) | list }}"
-      eventsources: "{{ demo_showcase_current.eventsources | rejectattr('id', 'in', _demo_showcase_allow.eventsources + (_demo_showcase_allow.eventsources | map('int') | list)) | list }}"
-      eventrules: "{{ demo_showcase_current.eventrules | rejectattr('id', 'in', _demo_showcase_allow.eventrules + (_demo_showcase_allow.eventrules | map('int') | list)) | list }}"
+      users: "{{ demo_showcase_current.users | rejectattr('id', 'in', _demo_showcase_allow_ids.users) | list }}"
+      companies: "{{ demo_showcase_current.companies | rejectattr('id', 'in', _demo_showcase_allow_ids.companies) | list }}"
+      runtemplates: "{{ demo_showcase_current.runtemplates | rejectattr('id', 'in', _demo_showcase_allow_ids.runtemplates) | list }}"
+      credentials: "{{ demo_showcase_current.credentials | rejectattr('id', 'in', _demo_showcase_allow_ids.credentials) | list }}"
+      tokens: "{{ demo_showcase_current.tokens | rejectattr('id', 'in', _demo_showcase_allow_ids.tokens) | list }}"
+      eventsources: "{{ demo_showcase_current.eventsources | rejectattr('id', 'in', _demo_showcase_allow_ids.eventsources) | list }}"
+      eventrules: "{{ demo_showcase_current.eventrules | rejectattr('id', 'in', _demo_showcase_allow_ids.eventrules) | list }}"
