@@ -48,12 +48,52 @@ def run_cli_json(module, args):
         module.fail_json(msg="multiflexi-cli returned invalid JSON: %s" % result.stdout.strip()[:200])
 
 
+def _mask_json_string(text):
+    """Redact secrets inside a string that holds a JSON object or list; other strings are returned unchanged."""
+    stripped = text.strip()
+    if stripped[:1] in ("{", "[") and stripped[-1:] in ("}", "]"):
+        try:
+            decoded = json.loads(stripped)
+        except ValueError:
+            return text
+        redacted = redact(decoded)
+        return json.dumps(redacted) if redacted != decoded else text
+    return text
+
+
 def redact(value):
-    """Return a copy of value with the content of secret-looking fields masked (recursive)."""
+    """Return a copy of value with the content of secret-looking fields masked (recursive).
+
+    Besides fields whose *name* looks secret this also masks the "value" of name/value records
+    (``{"name": "password", "value": "..."}``) and secrets inside JSON-encoded strings.
+    """
     if isinstance(value, dict):
-        return {k: (MASK if SECRET_KEY.search(str(k)) and v not in (None, "") else redact(v)) for k, v in value.items()}
+        label = next((value[k] for k in ("name", "key", "field", "keyword") if isinstance(value.get(k), str)), None)
+        label_is_secret = label is not None and SECRET_KEY.search(label)
+        out = {}
+        for k, v in value.items():
+            if v in (None, ""):
+                out[k] = v
+            elif SECRET_KEY.search(str(k)) or (label_is_secret and str(k) in ("value", "val", "content", "data")):
+                out[k] = MASK
+            else:
+                out[k] = redact(v)
+        return out
     if isinstance(value, list):
         return [redact(v) for v in value]
+    if isinstance(value, str):
+        return _mask_json_string(value)
+    return value
+
+
+def project(value, safe_fields):
+    """Keep only the allowlisted fields of each record (used for entities that mostly hold secrets)."""
+    if not safe_fields:
+        return value
+    if isinstance(value, list):
+        return [project(v, safe_fields) for v in value]
+    if isinstance(value, dict):
+        return {k: v for k, v in value.items() if k in safe_fields}
     return value
 
 
@@ -88,12 +128,13 @@ def info_argument_spec(selectors=None, filters=None):
     return spec
 
 
-def run_info(module, singular, plural, list_command, get_command=None, selectors=None, filters=None):
+def run_info(module, singular, plural, list_command, get_command=None, selectors=None, filters=None, safe_fields=None):
     """Execute an info module.
 
     ``selectors`` maps module params to ``<get_command>`` CLI options (``{"id": "--id"}``).
     The first one given is used to fetch a single record; with none given the whole list is returned.
     ``filters`` maps module params to ``<list_command>`` CLI options.
+    ``safe_fields`` is an allowlist of fields returned unless ``show_secrets`` is set (for entities that hold secrets).
     """
     params = module.params
     if get_command:
@@ -107,7 +148,7 @@ def run_info(module, singular, plural, list_command, get_command=None, selectors
                 if _is_not_found(data) or not data:
                     module.exit_json(changed=False, found=False, **{singular: None})
                 if not params.get("show_secrets"):
-                    data = redact(data)
+                    data = redact(project(data, safe_fields))
                 module.exit_json(changed=False, found=True, **{singular: data})
 
     args = [list_command]
@@ -125,5 +166,5 @@ def run_info(module, singular, plural, list_command, get_command=None, selectors
         data = []
     rows = _rows(data)
     if not params.get("show_secrets"):
-        rows = redact(rows)
+        rows = redact(project(rows, safe_fields))
     module.exit_json(changed=False, count=len(rows), **{plural: rows})

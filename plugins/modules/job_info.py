@@ -45,6 +45,7 @@ options:
     description:
       - Return the content of secret fields (passwords, tokens, API keys) instead of masking it as C(***).
       - Keep it off; results end up in job logs.
+      - Without it only a short allowlist of non-secret fields is returned for credentials, tokens and event sources.
     type: bool
     default: false
   multiflexi_cli_path:
@@ -101,6 +102,7 @@ def main():
         get_command='job:get',
         selectors={'id': '--id'},
         filters={'status': '--status'},
+        safe_fields=None,
     )
 
 

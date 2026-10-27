@@ -111,3 +111,30 @@ def test_single_record_is_masked_too():
     with mock.patch.object(cli.subprocess, "run", return_value=proc(json.dumps({"id": 1, "password": "p"}))):
         out = run(m, singular="user", plural="users", list_command="user:list", get_command="user:get", selectors={"id": "--id"})
     assert out.kw["user"] == {"id": 1, "password": "***"}
+
+
+def test_name_value_records_are_masked():
+    rows = [{"name": "password", "value": "hunter2"}, {"name": "host", "value": "db1"}]
+    assert cli.redact(rows) == [{"name": "password", "value": "***"}, {"name": "host", "value": "db1"}]
+
+
+def test_json_encoded_strings_are_redacted():
+    out = cli.redact({"config": '{"db_password": "x", "host": "h"}', "note": "plain {text}"})
+    assert json.loads(out["config"]) == {"db_password": "***", "host": "h"}
+    assert out["note"] == "plain {text}"
+
+
+def test_safe_fields_allowlist_drops_everything_else():
+    m = make_module()
+    rows = [{"id": 1, "name": "c", "company_id": 2, "payload": "opaque-secret"}]
+    with mock.patch.object(cli.subprocess, "run", return_value=proc(json.dumps(rows))):
+        out = run(m, singular="credential", plural="credentials", list_command="credential:list",
+                  safe_fields=["id", "name", "company_id"])
+    assert out.kw["credentials"] == [{"id": 1, "name": "c", "company_id": 2}]
+
+
+def test_safe_fields_not_applied_with_show_secrets():
+    m = make_module(show_secrets=True)
+    with mock.patch.object(cli.subprocess, "run", return_value=proc(json.dumps([{"id": 1, "payload": "x"}]))):
+        out = run(m, singular="credential", plural="credentials", list_command="credential:list", safe_fields=["id"])
+    assert out.kw["credentials"] == [{"id": 1, "payload": "x"}]
