@@ -1,0 +1,42 @@
+---
+# One showcase company: a rotating slice of the presented applications (loop_var demo_showcase_company,
+# index_var demo_showcase_ci). Slices overlap round-robin so every application appears somewhere.
+- name: Resolve the company ID
+  ansible.builtin.set_fact:
+    _demo_showcase_company_id: >-
+      {{ demo_showcase_company_list.companies
+         | selectattr('slug', 'equalto', demo_showcase_company.slug)
+         | map(attribute='id') | first | default('') }}
+
+- name: Pick the applications of this company
+  ansible.builtin.set_fact:
+    _demo_showcase_company_apps: "{{ (demo_showcase_presented_apps * 2)[(start | int) : (start | int) + (per | int)] }}"
+  vars:
+    n: "{{ demo_showcase_presented_apps | length }}"
+    per: "{{ [demo_showcase_apps_per_company | int, n | int] | min }}"
+    start: "{{ (demo_showcase_ci | int * per | int) % (n | int) }}"
+  when: _demo_showcase_company_id | string | length > 0
+
+- name: Assign applications to {{ demo_showcase_company.slug }}
+  vitexus.multiflexi.companyapp:
+    state: present
+    company_id: "{{ _demo_showcase_company_id }}"
+    app_uuid: "{{ item.uuid }}"
+  loop: "{{ _demo_showcase_company_apps | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  become: true
+
+- name: Ensure run templates for {{ demo_showcase_company.slug }}
+  vitexus.multiflexi.runtemplate:
+    state: present
+    name: "{{ demo_showcase_company.name }}: {{ item.name }}"
+    app_uuid: "{{ item.uuid }}"
+    company: "{{ demo_showcase_company.slug }}"
+    interv: "{{ demo_showcase_intervals[(demo_showcase_ci + ansible_loop.index0) % (demo_showcase_intervals | length)] }}"
+    active: "{{ demo_showcase_runtemplates_active | bool }}"
+  loop: "{{ _demo_showcase_company_apps | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+    extended: true
+  become: true

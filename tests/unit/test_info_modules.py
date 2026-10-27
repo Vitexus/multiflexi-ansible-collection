@@ -86,3 +86,28 @@ def test_wrapped_list_response_is_unwrapped():
     with mock.patch.object(cli.subprocess, "run", return_value=proc(json.dumps({"items": [{"id": 1}, {"id": 2}]}))):
         out = run(m, singular="user", plural="users", list_command="user:list")
     assert out.kw["count"] == 2
+
+
+def test_secrets_are_masked_by_default():
+    m = make_module()
+    rows = [{"id": 1, "token": "abc", "user_id": 3, "cfg": {"db_password": "x", "host": "h"}, "api_key": "", "executable": "/bin/x"}]
+    with mock.patch.object(cli.subprocess, "run", return_value=proc(json.dumps(rows))):
+        out = run(m, singular="token", plural="tokens", list_command="token:list")
+    rec = out.kw["tokens"][0]
+    assert rec["token"] == "***" and rec["cfg"]["db_password"] == "***"
+    assert rec["cfg"]["host"] == "h" and rec["user_id"] == 3 and rec["executable"] == "/bin/x"
+    assert rec["api_key"] == ""  # empty secrets are left alone
+
+
+def test_show_secrets_returns_raw_values():
+    m = make_module(show_secrets=True)
+    with mock.patch.object(cli.subprocess, "run", return_value=proc(json.dumps([{"id": 1, "token": "abc"}]))):
+        out = run(m, singular="token", plural="tokens", list_command="token:list")
+    assert out.kw["tokens"] == [{"id": 1, "token": "abc"}]
+
+
+def test_single_record_is_masked_too():
+    m = make_module(id=1)
+    with mock.patch.object(cli.subprocess, "run", return_value=proc(json.dumps({"id": 1, "password": "p"}))):
+        out = run(m, singular="user", plural="users", list_command="user:list", get_command="user:get", selectors={"id": "--id"})
+    assert out.kw["user"] == {"id": 1, "password": "***"}

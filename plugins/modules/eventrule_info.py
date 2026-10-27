@@ -40,6 +40,12 @@ options:
     description: Restrict the returned records to these fields.
     type: list
     elements: str
+  show_secrets:
+    description:
+      - Return the content of secret fields (passwords, tokens, API keys) instead of masking it as C(***).
+      - Keep it off; results end up in job logs.
+    type: bool
+    default: false
   multiflexi_cli_path:
     description: Path to the C(multiflexi-cli) executable.
     type: str

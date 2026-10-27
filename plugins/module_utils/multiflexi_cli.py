@@ -6,13 +6,19 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import json
+import re
 import subprocess
+
+# Field names whose values are secrets; masked in *_info results unless show_secrets=true.
+SECRET_KEY = re.compile(r"(pass(word|wd)?|secret|api[_-]?key|private[_-]?key|^token(_value)?$|_token$)", re.I)
+MASK = "***"
 
 COMMON_LIST_ARGS = dict(
     limit=dict(type="int", required=False),
     offset=dict(type="int", required=False),
     order=dict(type="str", required=False, choices=["A", "D"]),
     fields=dict(type="list", elements="str", required=False),
+    show_secrets=dict(type="bool", required=False, default=False),
     multiflexi_cli_path=dict(type="str", required=False, default="multiflexi-cli"),
 )
 
@@ -40,6 +46,15 @@ def run_cli_json(module, args):
         if result.returncode != 0:
             module.fail_json(msg="multiflexi-cli error: %s" % (result.stderr.strip() or result.stdout.strip()), rc=result.returncode)
         module.fail_json(msg="multiflexi-cli returned invalid JSON: %s" % result.stdout.strip()[:200])
+
+
+def redact(value):
+    """Return a copy of value with the content of secret-looking fields masked (recursive)."""
+    if isinstance(value, dict):
+        return {k: (MASK if SECRET_KEY.search(str(k)) and v not in (None, "") else redact(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact(v) for v in value]
+    return value
 
 
 def _is_not_found(data):
@@ -91,6 +106,8 @@ def run_info(module, singular, plural, list_command, get_command=None, selectors
                 _fail_on_error(module, data)
                 if _is_not_found(data) or not data:
                     module.exit_json(changed=False, found=False, **{singular: None})
+                if not params.get("show_secrets"):
+                    data = redact(data)
                 module.exit_json(changed=False, found=True, **{singular: data})
 
     args = [list_command]
@@ -107,4 +124,6 @@ def run_info(module, singular, plural, list_command, get_command=None, selectors
     if _is_not_found(data):
         data = []
     rows = _rows(data)
+    if not params.get("show_secrets"):
+        rows = redact(rows)
     module.exit_json(changed=False, count=len(rows), **{plural: rows})

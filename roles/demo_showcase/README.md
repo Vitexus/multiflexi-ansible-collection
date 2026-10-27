@@ -30,6 +30,11 @@ visitor), to `{{ demo_showcase_state_dir }}/observed/<time>-reconcile.json` (mod
 (the OTEL journald receiver ships it to Loki). `audit` logs its result the same way (`auth.info` clean, `auth.warning`
 data abuse, `auth.alert` host compromise), so alerts can be built on priority.
 
+Secret fields (passwords, tokens, API keys) are masked as `***` by the `*_info` modules, so neither the archive nor
+the journal ever holds them. Visitor-controlled values are only handled by filters that keep Ansible's untrusted
+marking (no `to_json`/`from_json` round trips), so a hostile record name such as `{{ lookup('pipe', ...) }}` stays
+inert text.
+
 Set `demo_showcase_reconcile_dry_run: true` to only observe: records are archived and reported but not deleted.
 Use it only on an isolated host, since a visitor-created application can execute code.
 

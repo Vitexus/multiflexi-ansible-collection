@@ -1,5 +1,7 @@
 ---
 # Idempotently (re)creates the showcase: companies, application assignments, run templates.
+# Only packaged applications are presented: this runs after reconcile has removed foreign ones
+# (reconcile skips it in dry-run mode) and names containing Jinja markers are refused on top.
 - name: List installed applications
   vitexus.multiflexi.application_info:
   register: demo_showcase_apps_result
@@ -10,6 +12,7 @@
     demo_showcase_presented_apps: >-
       {{ demo_showcase_apps_result.applications
          | rejectattr('name', 'in', demo_showcase_app_name_skiplist)
+         | rejectattr('name', 'search', '[{][{%#]')
          | selectattr('uuid', 'defined')
          | sort(attribute='name')
          | list }}
@@ -31,54 +34,11 @@
   register: demo_showcase_company_list
   become: true
 
-- name: Plan which applications are presented under which company
-  ansible.builtin.set_fact:
-    demo_showcase_plan: >-
-      {%- set apps = demo_showcase_presented_apps -%}
-      {%- set per = [demo_showcase_apps_per_company | int, apps | length] | min -%}
-      {%- set ids = dict(demo_showcase_company_list.companies | map(attribute='slug') | zip(demo_showcase_company_list.companies | map(attribute='id'))) -%}
-      {%- set out = [] -%}
-      {%- for company in demo_showcase_companies if company.slug in ids -%}
-        {%- set ci = loop.index0 -%}
-        {%- for k in range(per) -%}
-          {%- set app = apps[(ci * per + k) % (apps | length)] -%}
-          {%- set _ = out.append({
-                'company_slug': company.slug,
-                'company_id': ids[company.slug],
-                'company_name': company.name,
-                'app_uuid': app.uuid,
-                'app_name': app.name,
-                'interv': demo_showcase_intervals[(ci + k) % (demo_showcase_intervals | length)]
-              }) -%}
-        {%- endfor -%}
-      {%- endfor -%}
-      {{ out | to_json }}
+- name: Present applications under each company
+  ansible.builtin.include_tasks: content_company.yml
+  loop: "{{ demo_showcase_companies }}"
+  loop_control:
+    loop_var: demo_showcase_company
+    index_var: demo_showcase_ci
+    label: "{{ demo_showcase_company.slug }}"
   when: demo_showcase_presented_apps | length > 0
-
-- name: Parse the plan
-  ansible.builtin.set_fact:
-    demo_showcase_plan: "{{ demo_showcase_plan | from_json }}"
-  when: demo_showcase_plan is defined and demo_showcase_plan is string
-
-- name: Assign applications to the showcase companies
-  vitexus.multiflexi.companyapp:
-    state: present
-    company_id: "{{ item.company_id }}"
-    app_uuid: "{{ item.app_uuid }}"
-  loop: "{{ demo_showcase_plan | default([]) }}"
-  loop_control:
-    label: "{{ item.company_slug }} / {{ item.app_name }}"
-  become: true
-
-- name: Ensure run templates for the presented applications
-  vitexus.multiflexi.runtemplate:
-    state: present
-    name: "{{ item.company_name }}: {{ item.app_name }}"
-    app_uuid: "{{ item.app_uuid }}"
-    company: "{{ item.company_slug }}"
-    interv: "{{ item.interv }}"
-    active: "{{ demo_showcase_runtemplates_active | bool }}"
-  loop: "{{ demo_showcase_plan | default([]) }}"
-  loop_control:
-    label: "{{ item.company_slug }} / {{ item.app_name }}"
-  become: true

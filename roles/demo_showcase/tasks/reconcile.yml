@@ -135,6 +135,9 @@
     label: "{{ item.path | basename }}"
   become: true
 
+# Not in dry-run mode: foreign applications are still present then and must not be presented.
 - name: Re-assert the showcase content
   ansible.builtin.include_tasks: content.yml
-  when: demo_showcase_reconcile_reapply | bool
+  when:
+    - demo_showcase_reconcile_reapply | bool
+    - not (demo_showcase_reconcile_dry_run | bool)

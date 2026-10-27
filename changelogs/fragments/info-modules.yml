@@ -1,6 +1,7 @@
 ---
 minor_changes:
   - Add read-only ``application_info``, ``runtemplate_info``, ``job_info``, ``user_info``, ``credential_info``, ``token_info``, ``eventsource_info``, ``eventrule_info`` and ``companyapp_info`` modules that list or fetch records through ``multiflexi-cli``, sharing the new ``module_utils/multiflexi_cli`` helper.
+  - info modules - mask the content of secret fields (passwords, tokens, API keys) in results unless ``show_secrets`` is set.
   - runtemplate - add ``auto_credentials`` and ``credential_requirements`` to assign credentials by the application's requirements (fails when a requirement has no or more than one matching credential).
   - company_info - now lists all companies when none of ``name``, ``slug`` or ``ic`` is given (it used to fail).
 bugfixes:
